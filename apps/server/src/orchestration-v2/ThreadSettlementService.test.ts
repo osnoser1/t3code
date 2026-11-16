@@ -147,6 +147,17 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+    // Settling detaches the session, which would kill the wake turn Claude starts when it ends.
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({
+          pendingBackgroundTasks: [
+            { taskId: "build", kind: "command", description: "vp run build", awaited: true },
+          ],
+        }),
+        NOW_MS,
+      ),
+    ).toBe(false);
     // A pull request watch whose checks finished holds nothing, yet still keeps the thread.
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
