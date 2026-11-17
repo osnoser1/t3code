@@ -16431,8 +16431,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each(["none", "before", "after", "sibling"] as const)(
-    "keeps an exited background command on the roster until its wake run starts (empty level %s notification)",
+  it.effect.each(["none", "before", "after", "sibling", "intervening"] as const)(
+    "keeps an exited background command on the roster until its wake run starts (%s)",
     (emptyLevel) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -16477,11 +16477,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* harness.awaitTerminal(1);
+        // A message from another thread opens a turn that does not mark the task again.
+        const wakeTurnOrdinal = emptyLevel === "intervening" ? 3 : 2;
+        if (emptyLevel === "intervening") {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-roster-intervening"),
+              text: "A note from the coordinating thread.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000210" }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000211", result: "Noted." }),
+          );
+          yield* harness.awaitTerminal(2);
+        }
         const afterFirstTurn = harness.events.length;
         if (emptyLevel === "before" || emptyLevel === "sibling")
           yield* harness.offerAndWait(emptyRoster);
         yield* harness.offerAndWait(wakeNotification);
-        if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
+        if (emptyLevel === "after" || emptyLevel === "intervening")
+          yield* harness.offerAndWait(emptyRoster);
         // Query replacement reads the internal roster, which the exit already cleared.
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         yield* harness.offerAndWait(wakeTurnInit);
@@ -16493,14 +16516,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attemptId: wakeAttemptId,
             text: "Background task completed.",
             attachments: [],
-            providerTurnOrdinal: 2,
+            providerTurnOrdinal: wakeTurnOrdinal,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
           }),
         );
         yield* harness.offerAndWait(wakeAssistant);
         yield* harness.offerAndWait(wakeResult);
-        yield* harness.awaitTerminal(2);
+        yield* harness.awaitTerminal(wakeTurnOrdinal);
 
         const wakeStart = harness.events.findIndex(
           (event) =>
